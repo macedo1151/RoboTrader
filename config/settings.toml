@@ -1,0 +1,133 @@
+# Configuração do RoboTrader
+# Valores monetários em R$. Distâncias de stop/alvo em PONTOS do ativo.
+
+[general]
+mode = "paper"              # "paper" (simulado) ou "mt5" (envia ordens ao MetaTrader 5)
+timeframe = "M5"            # M1, M2, M5, M10, M15, M30, H1
+log_dir = "logs"
+allow_real_account = false  # trava de segurança: só aceita conta DEMO no MT5 enquanto for false
+magic = 260001              # identifica as ordens deste robô no MT5
+
+[session]
+# Horários de Brasília. Confira o horário vigente da B3 (muda em alguns períodos do ano).
+start = "09:05"        # não abre posição antes disso
+last_entry = "17:00"   # não abre posição depois disso
+flatten = "17:50"      # zera tudo a partir deste horário (day trade)
+
+[risk]
+contracts = 1               # contratos por entrada
+max_daily_loss = 300.0      # R$ — atingiu, para de operar no dia
+max_trades_per_day = 6
+max_consecutive_losses = 3  # para no dia após N perdas seguidas
+
+[instruments.WIN]
+enabled = true
+data_symbol = "WIN$N"       # série contínua (dados). Ordens vão para o contrato vigente (ex.: WINZ26)
+contract = ""               # deixe vazio para calcular o contrato vigente automaticamente
+stop_points = 0             # sem stop fixo: usa o stop de emergência por ATR abaixo
+target_points = 0
+stop_atr = 10.0             # stop de emergência: 10 x ATR(14) da barra das 9:00 (~1.300 pts típicos)
+slippage_ticks = 1
+cost_per_contract = 0.50    # R$ por contrato por lado (corretagem + emolumentos). Ajuste à sua corretora.
+
+# S&P noturno x abertura do WIN (ver README e reports/gap_research/).
+# Opera CONTRA o gap noturno do micro S&P da B3 quando ele é maior que a mediana
+# dos 120 pregões anteriores. Entra às 9:05, sai na barra seguinte a `exit_at`.
+[instruments.WIN.strategy]
+name = "external_gap"
+external = "WSP$N"
+exit_at = "13:00"
+threshold_q = 0.5
+lookback = 120
+direction = -1
+
+# Segunda estratégia no WIN: reversão do dia anterior (H7, research/diversify2.py).
+# CANDIDATA — não passou no critério t >= 2; roda só no simulado para acumular evidência.
+# Tem posição simulada própria (independente da estratégia do S&P). O modo mt5 recusa
+# duas estratégias no mesmo contrato (conta netting misturaria as posições).
+[instruments.WIN_REV]
+root = "WIN"
+enabled = true
+data_symbol = "WIN$N"
+contract = ""
+stop_points = 0
+target_points = 0
+stop_atr = 10.0             # mesmo stop de emergência da estratégia do S&P
+slippage_ticks = 1
+cost_per_contract = 0.50
+
+[instruments.WIN_REV.strategy]
+name = "prev_day_reversal"
+threshold_q = 0.5           # só opera se o movimento de ontem passou da mediana de 120 pregões
+lookback = 120
+exit_at = "17:40"           # sai às 17:45 (abertura da barra seguinte)
+
+# WDO desligado: nenhuma estratégia testada teve vantagem após custos.
+[instruments.WDO]
+enabled = false
+data_symbol = "WDO$N"
+contract = ""
+stop_points = 6.0
+target_points = 12.0
+slippage_ticks = 1
+cost_per_contract = 1.50
+
+[instruments.WDO.strategy]
+name = "opening_range_breakout"
+range_minutes = 30
+
+# ---------------------------------------------------------------------------
+# Variantes com trailing stop de 4 ATR (research/risk_lab2.py: "Trailing 4 ATR"; era 3 ATR
+# até 29/10/2026 — trocado uma vez, antes do simulado começar).
+# Mesmas estratégias acima; só a saída muda. Rodam no simulado para comparação.
+[instruments.WIN_TR]
+root = "WIN"
+enabled = true
+data_symbol = "WIN$N"
+contract = ""
+stop_points = 0
+target_points = 0
+stop_atr = 10.0
+trail_atr = 4.0             # depois de andar 4 ATR a favor, o stop segue o preço a 4 ATR
+slippage_ticks = 1
+cost_per_contract = 0.50
+
+[instruments.WIN_TR.strategy]
+name = "external_gap"
+external = "WSP$N"
+exit_at = "13:00"
+threshold_q = 0.5
+lookback = 120
+direction = -1
+
+[instruments.WIN_REV_TR]
+root = "WIN"
+enabled = true
+data_symbol = "WIN$N"
+contract = ""
+stop_points = 0
+target_points = 0
+stop_atr = 10.0
+trail_atr = 4.0
+slippage_ticks = 1
+cost_per_contract = 0.50
+
+[instruments.WIN_REV_TR.strategy]
+name = "prev_day_reversal"
+threshold_q = 0.5
+lookback = 120
+exit_at = "17:40"
+
+# ---------------------------------------------------------------------------
+# Grupos de carteira: estratégias no mesmo contrato operadas como POSIÇÃO LÍQUIDA
+# (research/risk_lab.py: "Posição líquida das duas"). Se uma compra e outra vende no
+# mesmo dia, nenhuma entra; se concordam, cada uma usa agree_multiplier x contratos.
+[[portfolio]]
+name = "principal"
+members = ["WIN", "WIN_REV"]
+agree_multiplier = 2.0
+
+[[portfolio]]
+name = "trailing"
+members = ["WIN_TR", "WIN_REV_TR"]
+agree_multiplier = 2.0

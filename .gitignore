@@ -1,0 +1,12 @@
+.venv/
+.venv-mt5/
+__pycache__/
+*.pyc
+.pytest_cache/
+logs/
+data/*.csv
+reports/
+STOP
+config/local.toml
+data/**/*.csv
+data/*.log
