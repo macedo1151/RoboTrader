@@ -37,7 +37,7 @@ Backtest 2023–2026 (1 contrato, com custos e 1 tick de slippage): fator de luc
 Requer Windows (por causa do MT5) e um MetaTrader 5 de corretora com acesso à B3.
 
 ```bash
-git clone https://github.com/<seu-usuario>/RoboTrader.git
+git clone https://github.com/macedo1151/RoboTrader.git
 cd RoboTrader
 
 python -m venv .venv
