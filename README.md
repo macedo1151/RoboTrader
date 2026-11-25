@@ -1,221 +1,114 @@
-# RoboTrader — WIN e WDO (B3)
+# RoboTrader
 
-Robô de day trade para **mini índice (WIN)** e **mini dólar (WDO)**, em Python,
-com execução via **MetaTrader 5**.
+Robô de day trade para **mini índice (WIN)** e **mini dólar (WDO)** da B3, escrito em Python, com backtest realista, pesquisa walk-forward e execução via **MetaTrader 5**.
 
-> ⚠️ Projeto em fase 1: **backtest e simulação**. As estratégias incluídas são
-> exemplos para validar a estrutura, não sistemas lucrativos. Opere dinheiro
-> real só depois de backtest com dados reais, custos reais e semanas em conta demo.
+![Python](https://img.shields.io/badge/Python-3.13%20%7C%203.15-3776AB?logo=python&logoColor=white)
+![Plataforma](https://img.shields.io/badge/MetaTrader%205-Windows-0A66C2)
+![Modo](https://img.shields.io/badge/modo-simulado%20(paper)-orange)
+![Licença](https://img.shields.io/badge/licença-MIT-green)
 
-## Operação em simulado (estado atual)
+> ⚠️ **Aviso:** projeto educacional e de pesquisa, hoje em **fase de backtest e simulação**. Nenhuma ordem real é enviada no modo padrão. Day trade envolve risco de perda total do capital. Nada aqui é recomendação de investimento. Opere dinheiro real somente após validar com dados reais, custos reais e semanas em conta demo.
 
-Quatro entradas no WIN, em dois **grupos de carteira** (o WDO está desligado). Nenhuma
-ordem é enviada: `mode = "paper"` simula as execuções com o mesmo modelo do backtest.
+## Destaques
+
+- **Backtest sem olhar o futuro:** o sinal só é executado depois que a barra fecha, com slippage e custos por contrato em toda operação. Se stop e alvo cabem na mesma barra, assume-se o stop.
+- **Mesmo modelo de execução em tudo:** backtest, replay e simulado usam as mesmas regras (`execution.py`), então os resultados são comparáveis.
+- **Pesquisa com walk-forward:** otimiza em 120 pregões e mede nos 21 seguintes, que o otimizador não viu. Só o resultado fora da amostra conta.
+- **Gestão de risco embutida:** horário de entrada, zeragem obrigatória, perda máxima diária, limite de operações e de perdas seguidas, recalculados a partir da corretora (valem após reiniciar).
+- **Carteira de estratégias:** grupos com posição líquida, em que sinais opostos se anulam e sinais concordantes aumentam o tamanho.
+- **Simulado ao vivo com painel local:** liga e desliga o robô por uma página em `localhost`.
+- **Botão de pânico:** criar um arquivo `STOP` na raiz zera as posições e bloqueia novas entradas.
+
+## Estratégia em operação (simulado)
+
+A principal é a **`external_gap`**: o micro S&P da B3 (WSP) abre junto com o WIN, e o gap dele mede o movimento noturno do S&P. Quando o gap é maior que a mediana dos 120 pregões anteriores, o robô opera **contra** ele no WIN, entra às 9:05 e sai em horário fixo.
 
 | Grupo | Entradas | Saída |
 |---|---|---|
-| `principal` | `WIN` (S&P noturno, `external_gap`) + `WIN_REV` (reversão do dia anterior, candidata) | horário + stop de emergência 10 ATR |
-| `trailing` | `WIN_TR` + `WIN_REV_TR` (as mesmas estratégias) | idem + trailing de 4 ATR |
+| `principal` | `WIN` (S&P noturno) + `WIN_REV` (reversão do dia anterior) | horário + stop de emergência de 10 ATR |
+| `trailing` | as mesmas estratégias | idem + trailing de 4 ATR |
 
-Cada grupo opera como **posição líquida** (`[[portfolio]]` em `config/settings.toml`,
-`robotrader/portfolio.py`): se uma estratégia compra e a outra vende no mesmo dia, nenhuma
-entra; se concordam, cada uma usa `agree_multiplier` (2x) contratos. O grupo `trailing`
-existe para comparar, no simulado, se o trailing melhora o resultado daqui para frente.
-O modo `mt5` recusa duas estratégias no mesmo contrato e não suporta trailing.
+Backtest 2023–2026 (1 contrato, com custos e 1 tick de slippage): fator de lucro de 1,33, positivo nos 4 anos e nos dois lados, permutação p = 0,003.
 
-Backtest 2023–2026 dos grupos: `research/portfolio_check.py`. Regras de risco testadas
-(inclusive alvo fixo de 2.000 pts e stop fixo de 500 pts): `research/risk_lab.py`, que
-também gera os dados do dashboard.
-
-1. Abra o MetaTrader 5 da Genial e faça login (antes das 9:00).
-2. Dê dois cliques em **`iniciar_simulado.bat`** e deixe a janela aberta. Ele mostra a
-   decisão do dia e roda o robô. O computador não pode hibernar durante o pregão.
-3. Às 9:05 o robô decide: compra, vende ou não opera. A saída é após as 13:00
-   (ou no stop de emergência de 10 ATR, ou na zeragem das 17:50).
-4. **`relatorio_simulado.bat`** mostra as operações simuladas e o resultado acumulado.
-
-Arquivos: operações em `logs/paper/paper_trades.csv`, posição aberta em
-`logs/paper/paper_state.json` (o robô retoma após reinício), log diário em `logs/`.
-Se o MT5 cair, o robô tenta reconectar sozinho.
-
-Comandos úteis:
-
-```bash
-.venv-mt5\Scripts\python -m robotrader signal         # decisão do dia (gap do S&P x filtro)
-.venv-mt5\Scripts\python -m robotrader live           # robô (simulado)
-.venv\Scripts\python -m robotrader paper-report       # resultado do simulado
-```
-
-O que esperar (backtest 2023–2026): ~120 operações/ano (cerca de 1 a cada 2 pregões),
-~55% de acerto, ~R$ 24 líquidos por operação com 1 contrato, meses negativos são normais.
-Compare o simulado com isso por **pelo menos 2–3 meses** antes de pensar em dinheiro real.
-
-## Estrutura
-
-```
-config/settings.toml      parâmetros (horários, risco, stops, estratégia por ativo)
-robotrader/
-  contracts.py            tick, valor do ponto, vencimentos e contrato vigente
-  data.py                 leitura de CSV (padrão ou exportado do MT5), dados sintéticos
-  strategies/             estratégias (sinal +1/-1/0 por barra fechada)
-    sma_cross.py          cruzamento de médias
-    opening_range.py      rompimento da faixa de abertura
-  risk.py                 horário, perda diária, nº de operações, perdas seguidas
-  execution.py            stop/alvo, slippage e custos (mesmo modelo no backtest e no simulado)
-  backtest.py             motor barra a barra
-  metrics.py              resultado, acerto, fator de lucro, drawdown, Sharpe...
-  broker/paper.py         corretora simulada + replay de histórico
-  broker/mt5.py           conector MetaTrader 5 (dados e ordens)
-  live.py                 loop do robô ao vivo
-tests/                    testes automatizados (pytest)
-```
+> **Ressalva honesta:** o efeito foi descoberto nesses mesmos dados. A validação definitiva é o simulado daqui para frente, por pelo menos 2–3 meses.
 
 ## Instalação
 
+Requer Windows (por causa do MT5) e um MetaTrader 5 de corretora com acesso à B3.
+
 ```bash
+git clone https://github.com/<seu-usuario>/RoboTrader.git
+cd RoboTrader
+
 python -m venv .venv
 .venv\Scripts\python -m pip install -r requirements.txt
 ```
 
-O pacote `MetaTrader5` **ainda não suporta Python 3.15**. Por isso há dois ambientes:
+O pacote `MetaTrader5` ainda não suporta Python 3.15, então há dois ambientes:
 
 | Ambiente | Python | Para quê |
 |---|---|---|
 | `.venv` | 3.15 | backtest, replay, testes |
-| `.venv-mt5` | 3.13 | tudo acima **+** conexão com o MetaTrader 5 |
+| `.venv-mt5` | 3.13 | tudo acima, mais a conexão com o MT5 |
 
 ```bash
 py -3.13 -m venv .venv-mt5
 .venv-mt5\Scripts\python -m pip install -r requirements-mt5.txt
 ```
 
-### Conectando ao MetaTrader 5
-
-1. Instale o MT5 **da sua corretora** (precisa ter acesso a B3) e abra uma **conta demo**.
-2. Abra o terminal e faça login.
-3. Em *Ferramentas > Opções > Gráficos*, aumente **Máx. barras no gráfico** (ex.: 500000).
-4. Em *Ferramentas > Opções > Expert Advisors*, marque **Permitir negociação algorítmica**
-   (necessário só para enviar ordens).
-5. Teste e baixe o histórico:
+## Uso rápido
 
 ```bash
-.venv-mt5\Scripts\python -m robotrader check
-.venv-mt5\Scripts\python -m robotrader download --days 365
-.venv-mt5\Scripts\python -m robotrader backtest --instrument WIN --csv data/WIN_M5.csv
-```
-
-`check` mostra a conta, se é demo/real, e se os símbolos `WIN$N`/`WDO$N` e o contrato
-vigente existem na corretora (com sugestões, se os nomes forem diferentes).
-`download` salva `data/WIN_M5.csv` e `data/WDO_M5.csv`. Use `--timeframe M1` para
-barras de 1 minuto. Se vier menos histórico que o pedido, abra o gráfico do símbolo
-no MT5 e role para trás, para forçar a corretora a enviar mais dados.
-
-## Uso
-
-```bash
-# backtest com dados sintéticos (só testa o código)
+# teste do código com dados sintéticos
 .venv\Scripts\python -m robotrader backtest --synthetic
 
-# backtest com dados reais exportados do MT5 (Ctrl+U > Barras > Exportar)
+# conectar ao MT5 e baixar histórico (terminal aberto e logado)
+.venv-mt5\Scripts\python -m robotrader check
+.venv-mt5\Scripts\python -m robotrader download --days 365
+
+# backtest com dados reais
 .venv\Scripts\python -m robotrader backtest --instrument WIN --csv data/WIN_M5.csv
 
-# roda o loop ao vivo sobre o histórico, com corretora simulada
-.venv\Scripts\python -m robotrader replay --instrument WDO --csv data/WDO_M5.csv
+# decisão do dia e robô ao vivo em modo simulado
+.venv-mt5\Scripts\python -m robotrader signal
+.venv-mt5\Scripts\python -m robotrader live
 
-# contrato vigente
-.venv\Scripts\python -m robotrader contracts
-
-# ao vivo (requer MT5 aberto e logado). mode="paper" em config = só simula.
-.venv\Scripts\python -m robotrader live
-.venv\Scripts\python -m robotrader live --confirm   # mode="mt5": envia ordens
-
-# testes
+# resultado do simulado e testes
+.venv\Scripts\python -m robotrader paper-report
 .venv\Scripts\python -m pytest
 ```
 
-## Pesquisa de estratégias (walk-forward)
+No Windows há atalhos de duplo clique: `iniciar_simulado.bat`, `relatorio_simulado.bat` e `painel_robo.bat` (painel em `http://localhost:8765`).
 
-```bash
-.venv\Scripts\python research\explore.py        # comportamento intradiário de WIN/WDO
-.venv\Scripts\python research\run_research.py   # walk-forward de todas as famílias
+## Estrutura
+
+```
+config/settings.toml      parâmetros: horários, risco, stops, estratégia por ativo
+robotrader/
+  strategies/             sma_cross, donchian, opening_range, mean_reversion,
+                          external_gap, prev_day_reversal
+  backtest.py             motor barra a barra
+  execution.py            stop/alvo, slippage e custos
+  risk.py                 limites diários e horários
+  portfolio.py            grupos de carteira (posição líquida)
+  broker/                 corretora simulada (paper) e conector MT5
+  live.py                 loop do robô ao vivo
+  painel.py               painel local para ligar/desligar
+research/                 scripts de pesquisa e validação walk-forward
+tests/                    testes automatizados (pytest)
+docs/GUIA.md              guia detalhado de operação e pesquisa
 ```
 
-O walk-forward otimiza os parâmetros em 120 pregões e mede o resultado nos 21
-pregões **seguintes**, que o otimizador não viu. A janela anda de mês em mês e só os
-resultados fora da amostra (OOS) contam. Detalhes por estratégia ficam em
-`reports/research/` (janelas, parâmetros escolhidos, operações OOS, top 30 do ano).
+## Segurança
 
-Como ler o resumo:
-- **OOS líquido / fator de lucro**: desempenho realista, com custos e slippage.
-- **t**: estatística t do resultado diário OOS. Abaixo de ~2, não dá para distinguir de sorte.
-- **% combinações lucrativas**: se só poucas combinações ganham, a "estratégia" é ruído.
-- **Melhor no ano todo**: o que um otimizador ingênuo mostraria — quase sempre ilusório.
+- Com `mode = "paper"` (padrão), nenhuma ordem é enviada.
+- No modo MT5 o robô **recusa conta real** enquanto `allow_real_account = false`, e exige `--confirm` para enviar ordens.
+- Senhas nunca ficam no código: use o terminal já logado ou as variáveis `MT5_LOGIN`, `MT5_PASSWORD` e `MT5_SERVER`.
 
-Estratégias disponíveis: `sma_cross`, `donchian_breakout`, `opening_range_breakout`
-(modos `breakout` e `fade`) e `mean_reversion` (âncoras `sma` e `vwap`). Todas aceitam
-`entry_from`/`entry_until` ("HH:MM"). Stops podem ser fixos (`stop_points`) ou
-proporcionais à volatilidade (`stop_atr`, `target_atr`, múltiplos do ATR).
+## Documentação
 
-### Fluxo de ordens (agressão)
+O guia completo, com pesquisa de estratégias, análise de fluxo de ordens, mercados externos e checklist antes de operar, está em [docs/GUIA.md](docs/GUIA.md).
 
-```bash
-.venv-mt5\Scripts\python -m robotrader download-flow --instrument WDO --days 400
-.venv-mt5\Scripts\python -m robotrader download-flow --instrument WIN --by-contract --days 400
-.venv\Scripts\python research\flow_analysis.py      # o fluxo antecipa o preço?
-.venv\Scripts\python research\flow_economics.py     # o efeito paga os custos?
-```
+## Licença
 
-Baixa os negócios do MT5 dia a dia (retomável) e salva em `data/flow/` barras de 1 minuto
-com volume agredido de compra (`buy_vol`), venda (`sell_vol`), neutro e `delta`.
-O WIN não tem ticks na série contínua: use `--by-contract` (contrato vigente de cada dia).
-A Genial guarda ~1 ano de ticks do `WDO$N`, mas só os contratos de WIN ainda listados
-(~2,5 meses).
-
-### Mercados externos: S&P noturno x abertura do WIN (pista mais promissora)
-
-```bash
-.venv-mt5\Scripts\python research\download_external.py   # WSP, DI1, DOL... -> data/external/
-.venv\Scripts\python research\external_analysis.py        # lead-lag e efeito na abertura
-.venv\Scripts\python research\gap_research.py             # validação completa da estratégia
-```
-
-Estratégia `external_gap`: o micro S&P da B3 (WSP) abre às 9:00 junto com o WIN, e o gap
-dele mede o movimento noturno do S&P. Quando esse gap é maior que a mediana dos 120
-pregões anteriores, o robô opera **contra** ele no WIN (S&P subiu -> vende), entra às 9:05
-e sai num horário fixo (ex.: 13:00).
-
-Resultado 2023–2026 (1 contrato, custos e 1 tick de slippage): +R$ 10,6 mil, fator de
-lucro 1,33, positivo nos 4 anos e nos dois lados; 63/63 variações lucrativas; walk-forward
-+R$ 6,1 mil; permutação p = 0,003; aguenta até ~5 ticks de slippage por lado.
-**Ressalva:** o efeito foi descoberto nesses mesmos dados. A validação definitiva é
-operar em simulado daqui para frente.
-
-## Regras de execução e segurança
-
-- O sinal de uma barra só é executado **depois que ela fecha** (sem olhar o futuro).
-- Stop e alvo em pontos; se ambos cabem na mesma barra, o backtest assume o **stop**.
-- Slippage e custos por contrato aplicados em toda operação.
-- Zeragem obrigatória no horário `flatten`; sem entradas fora de `start`–`last_entry`.
-- Para no dia ao atingir perda máxima, nº máximo de operações ou perdas seguidas.
-  Os limites são recalculados a partir das operações na corretora, então valem mesmo
-  após reiniciar o robô.
-- **Botão de pânico:** crie um arquivo chamado `STOP` na raiz do projeto — o robô
-  zera as posições e não abre novas.
-- No MT5, o robô **recusa conta real** enquanto `allow_real_account = false`.
-- Senhas nunca ficam no código: use o terminal MT5 já logado, ou as variáveis de
-  ambiente `MT5_LOGIN`, `MT5_PASSWORD`, `MT5_SERVER`.
-
-## Pontos a conferir antes de operar
-
-- Horário de negociação vigente da B3 para WIN/WDO (muda em alguns períodos).
-- Custos reais da sua corretora (`cost_per_contract`).
-- Nomes dos símbolos na sua corretora (`WIN$N`, `WDO$N`, contrato atual).
-- Datas de rolagem: o cálculo do contrato vigente ignora feriados.
-
-## Próximos passos
-
-1. Obter histórico real (M1/M5) de WIN e WDO pelo MT5 da corretora.
-2. Backtest das estratégias com dados reais; otimização com validação fora da amostra
-   (walk-forward) para evitar sobreajuste.
-3. Desenvolver estratégias melhores (VWAP, volume, filtros de tendência/volatilidade).
-4. Rodar em conta demo pelo MT5 por algumas semanas e comparar com o backtest.
+Distribuído sob a licença [MIT](LICENSE).
